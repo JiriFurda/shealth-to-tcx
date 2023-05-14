@@ -4,6 +4,7 @@ import json
 import os
 from datetime import datetime
 import glob
+import math
 
 def convert_time(timestamp):
     """Convert timestamp to ISO 8601 time format"""
@@ -58,15 +59,15 @@ def create_tcx_file(json_data, filename):
     max_speed.text = "0"
 
     calories = ET.SubElement(lap, "Calories")
-    calories.text = str(int(json_data['calories']))
+    calories.text = str(int(json_data['calories'])) if not math.isnan(json_data['calories']) else '0'
 
     avg_hr = ET.SubElement(lap, "AverageHeartRateBpm")
     avg_hr_value = ET.SubElement(avg_hr, "Value")
-    avg_hr_value.text = str(int(json_data['avg_hr']))
+    avg_hr_value.text = str(int(json_data['avg_hr'])) if not math.isnan(json_data['avg_hr']) else '0'
 
     max_hr = ET.SubElement(lap, "MaximumHeartRateBpm")
     max_hr_value = ET.SubElement(max_hr, "Value")
-    max_hr_value.text = str(int(json_data['max_hr']))
+    max_hr_value.text = str(int(json_data['max_hr'])) if not math.isnan(json_data['max_hr']) else '0'
 
     intensity = ET.SubElement(lap, "Intensity")
     intensity.text = "Active"
@@ -95,9 +96,10 @@ files = glob.glob("com.samsung.shealth.exercise.*.csv")
 # get the latest file based on the file name
 filename = max(files, key=lambda x: int(x.split(".")[-2]))
 
-# Load data from the CSV file using pandas and select rows where "com.samsung.health.exercise.exercise_type" is 15002
+# Load data from the CSV file using pandas and select rows where "com.samsung.health.exercise.exercise_type" is 15002 or 13002
 df = pd.read_csv(filename, skiprows=[0], index_col=False)
-df = df[df["com.samsung.health.exercise.exercise_type"] == 15002]
+df = df[(df["com.samsung.health.exercise.exercise_type"] == 15002) | (df["com.samsung.health.exercise.exercise_type"] == 13002)]
+#df = df[df["com.samsung.health.exercise.live_data_internal"].notnull()] @todo Filter out entries from Strava
 
 # Extract the filenames of the additional JSON files from the "com.samsung.health.exercise.live_data" column
 json_dir = "jsons/com.samsung.shealth.exercise"
@@ -109,12 +111,19 @@ if not os.path.exists("tcx_files"):
 # Iterate over each JSON file and convert the data to TCX format
 for i, json_filename in enumerate(json_filenames):
     # Load data from the JSON file
+    if type(json_filename) != str: # @todo Can be removed when filtering out entries from Strava will work
+        continue
     json_path = os.path.join(json_dir, json_filename[0], json_filename)
-    output_filename = "tcx_files/" + os.path.splitext(json_filename)[0] + ".tcx"
+    start_time = datetime.strptime(df.iloc[i]["com.samsung.health.exercise.start_time"], "%Y-%m-%d %H:%M:%S.%f")
+    if df.iloc[i]["com.samsung.health.exercise.exercise_type"] == 15002:
+        activity = "workout"
+    elif df.iloc[i]["com.samsung.health.exercise.exercise_type"] == 13002:
+        activity = "climbing"
     data = process_file(json_path)
-    data['start_time'] = datetime.strptime(df.iloc[i]["com.samsung.health.exercise.start_time"], "%Y-%m-%d %H:%M:%S.%f").strftime("%Y-%m-%dT%H:%M:%SZ")
+    data['start_time'] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
     data['duration'] = df.iloc[i]["com.samsung.health.exercise.duration"]
     data['calories'] = df.iloc[i]["total_calorie"]
     data['avg_hr'] = df.iloc[i]["com.samsung.health.exercise.mean_heart_rate"]
     data['max_hr'] = df.iloc[i]["com.samsung.health.exercise.max_heart_rate"]
+    output_filename = "tcx_files/" + start_time.strftime("%Y-%m-%d") + "_" + activity + "_" + os.path.splitext(json_filename)[0] + ".tcx"
     create_tcx_file(data, output_filename)
